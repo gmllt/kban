@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>KBan</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+    .kanban-board { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .kanban-column { flex: 1 1 220px; min-width: 220px; }
+    .kanban-card { margin-bottom: 1rem; cursor: grab; }
+    .drag-over { background: #e3f2fd !important; }
+    .fa { vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2><i class="fa fa-table-columns text-primary me-2"></i>KBan</h2>
+      <button class="btn btn-success" id="addBtn"><i class="fa fa-plus"></i> Ajouter</button>
+    </div>
+    <div class="kanban-board" id="board">
+      <!-- Colonnes générées par JS -->
+    </div>
+  </div>
+
+  <!-- Modal création/édition -->
+  <div class="modal fade" id="cardModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form id="cardForm">
+          <div class="modal-header">
+            <h5 class="modal-title" id="modalTitle">Ajouter une carte</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label for="title" class="form-label">Titre</label>
+              <input type="text" class="form-control" id="title" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Description</label>
+              <div id="quillEditor" class="mt-2"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn btn-primary" id="modalSaveBtn">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+  <script>
+    const columns = ["ToDo", "Doing", "Hold", "Done"];
+    let cards = [];
+    let editingCard = null;
+    let dragCard = null;
+    let dragColumn = null;
+    const boardDiv = document.getElementById('board');
+    const cardModal = new bootstrap.Modal(document.getElementById('cardModal'));
+    const cardForm = document.getElementById('cardForm');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalSaveBtn = document.getElementById('modalSaveBtn');
+    document.getElementById('addBtn').onclick = () => {
+      editingCard = null;
+      modalTitle.textContent = 'Ajouter une carte';
+      modalSaveBtn.textContent = 'Ajouter';
+      cardForm.reset();
+      cardModal.show();
+    };
+
+    function fetchBoard() {
+      fetch('/api/board').then(r => r.json()).then(data => {
+        cards = data.cards || [];
+        renderBoard();
+      });
+    }
+
+    function renderBoard() {
+      boardDiv.innerHTML = '';
+      columns.forEach(col => {
+        const colDiv = document.createElement('div');
+        colDiv.className = 'kanban-column card shadow-sm';
+        colDiv.innerHTML = `<div class='card-header bg-light fw-bold text-center'>${col}</div>`;
+        const colBody = document.createElement('div');
+        colBody.className = 'card-body';
+        colBody.style.minHeight = '220px';
+        colBody.ondragover = e => e.preventDefault();
+        colBody.ondrop = e => {
+          e.preventDefault();
+          const id = e.dataTransfer.getData('text/plain');
+          // Drop sur la colonne (en bas)
+          moveCard(id, col, cards.filter(card => card.status === col).length - 1);
+        };
+        // Trier les cartes par position
+        const sortedCards = cards.filter(card => card.status === col).sort((a, b) => a.position - b.position);
+        sortedCards.forEach((card, idx) => {
+          const cardDiv = document.createElement('div');
+          cardDiv.className = 'kanban-card card mb-2';
+          cardDiv.draggable = true;
+          cardDiv.dataset.id = card.id;
+          cardDiv.dataset.idx = idx;
+          cardDiv.innerHTML = `
+            <div class='card-body'>
+              <div class='d-flex justify-content-between align-items-center'>
+                <span class='fw-bold'><i class="fa fa-note-sticky text-primary me-2"></i>${card.title}</span>
+                <div>
+                  <button class='btn btn-sm btn-outline-primary me-1' onclick='editCard("${card.id}")'><i class='fa fa-pen'></i></button>
+                  <button class='btn btn-sm btn-outline-danger' onclick='deleteCard("${card.id}")'><i class='fa fa-trash'></i></button>
+                </div>
+              </div>
+              <div class='mt-2 text-muted'>
+                <div>${card.description}</div>
+              </div>
+            </div>
+          `;
+          cardDiv.addEventListener('dragstart', e => {
+            e.dataTransfer.setData('text/plain', card.id);
+            e.dataTransfer.setData('card-idx', idx);
+            dragCard = card;
+          });
+          cardDiv.addEventListener('dragend', e => {
+            dragCard = null;
+          });
+          cardDiv.ondragover = e => {
+            e.preventDefault();
+          };
+          cardDiv.ondrop = e => {
+            e.preventDefault();
+            const id = e.dataTransfer.getData('text/plain');
+            const fromIdx = parseInt(e.dataTransfer.getData('card-idx'));
+            const toIdx = idx;
+            moveCard(id, col, toIdx);
+          };
+          colBody.appendChild(cardDiv);
+        });
+        colDiv.appendChild(colBody);
+        boardDiv.appendChild(colDiv);
+      });
+    }
+
+    function moveCard(id, newStatus, newPosition) {
+      const card = cards.find(c => c.id === id);
+      if (!card) return;
+      // Si on change de colonne ou de position
+      if (card.status !== newStatus || card.position !== newPosition) {
+        fetch(`/api/card/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...card, status: newStatus, position: newPosition })
+        }).then(() => fetchBoard());
+      }
+    }
+
+    window.deleteCard = function(id) {
+      fetch(`/api/card/${id}`, { method: 'DELETE' }).then(() => fetchBoard());
+    };
+
+    window.editCard = function(id) {
+      editingCard = cards.find(c => c.id === id);
+      if (!editingCard) return;
+      modalTitle.textContent = 'Éditer la carte';
+      modalSaveBtn.textContent = 'Enregistrer';
+      document.getElementById('title').value = editingCard.title;
+      cardModal.show();
+    };
+
+    let quill = null;
+    cardModal._element.addEventListener('shown.bs.modal', function () {
+      if (!quill) {
+        quill = new Quill('#quillEditor', { theme: 'snow', modules: { toolbar: [['bold', 'italic', 'underline'], [{ 'list': 'ordered'}, { 'list': 'bullet' }], ['clean']] } });
+      }
+      if (editingCard) {
+        quill.root.innerHTML = editingCard.description || '';
+      } else {
+        quill.root.innerHTML = '';
+      }
+    });
+    cardForm.onsubmit = function(e) {
+      e.preventDefault();
+      const title = document.getElementById('title').value;
+      const description = quill ? quill.root.innerHTML : '';
+      if (editingCard) {
+        fetch(`/api/card/${editingCard.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...editingCard, title, description })
+        }).then(() => {
+          editingCard = null;
+          cardModal.hide();
+          fetchBoard();
+        });
+      } else {
+        fetch('/api/card', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, description, status: 'ToDo' })
+        }).then(() => {
+          cardModal.hide();
+          fetchBoard();
+        });
+      }
+    };
+
+    fetchBoard();
+  </script>
+</body>
+</html>

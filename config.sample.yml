@@ -1,0 +1,9 @@
+# Example config.yml
+s3:
+  endpoint: "http://127.0.0.1:9000"
+  bucket: "kanban"
+  region: "us-east-1"
+  access_key: "user"
+  secret_key: "password"
+  use_path_style: true
+  disable_checksum: true
